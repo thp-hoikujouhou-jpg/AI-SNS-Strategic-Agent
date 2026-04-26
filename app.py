@@ -353,4 +353,9 @@ else:
                 save_handled_notifs(handled_notifs)
                 client.app.bsky.notification.update_seen({'seen_at': client.get_current_time_iso()})
                 st.success(L(f"新たに {new_handled} 件処理しました。", f"Processed {new_handled} new notifications."))
-            except Exception as e: st.error(f"Error: {e}")
+            except Exception as e:
+                err_str = str(e)
+                if "RateLimitExceeded" in err_str or "429" in err_str:
+                    st.error(L("⚠️ BlueskyのAPIリクエスト上限（1時間に5000回）に到達しました。制限が解除されるまでしばらくお待ちください。", "⚠️ Bluesky API Rate Limit Exceeded (5000/hr). Please wait a while."))
+                else:
+                    st.error(f"Error: {e}")
