@@ -91,13 +91,10 @@ def fetch_all_items(fetch_func, actor_did, item_type="follows", max_count=50000)
 class AIClient:
     def __init__(self, api_key, model_name):
         self.model_name = model_name
-        # Automatically detect provider by model name
         if "gemini" in model_name.lower():
-            # Google's OpenAI-compatible endpoint
             base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
         else:
-            base_url = None # Default OpenAI
-            
+            base_url = None
         self.client = OpenAI(api_key=api_key, base_url=base_url)
     
     def generate_content(self, prompt):
@@ -269,7 +266,7 @@ else:
             fols = fetch_all_items(client.get_followers, client.me.did, "followers", max_count=e_num)
             for f in fols:
                 try:
-                    feed = client.app.bsky.feed.get_author_feed({'actor': f.did, 'limit': max(num_l, num_c)}).feed
+                    feed = client.app.bsky.feed.get_author_feed({'actor': f.did, 'limit': 10}).feed
                     for i, item in enumerate(feed):
                         if i < num_l: client.like(item.post.uri, item.post.cid)
                         if i < num_c and ai:
@@ -312,7 +309,6 @@ else:
     with tab_notify:
         st.subheader(L("🔔 AI通知自動マネージャー", "🔔 AI Notification Manager"))
         handled_notifs = load_handled_notifs()
-        
         with st.expander(L("👤 フォローへの対応", "👤 Follow Settings")):
             do_follow_back = st.checkbox(L("自動フォローバックを有効にする", "Enable Auto Follow-back"))
             follow_policy = st.text_area(L("フォロー条件", "Follow conditions"), value=L(f"プロフィールの内容を見て、{target_kws}に関連する人であればフォローしてください。", f"Follow back if the profile matches {target_kws}."))
@@ -333,17 +329,14 @@ else:
                     if n.uri in handled_notifs or n.is_read:
                         handled_notifs.add(n.uri)
                         continue
-                    
-                    # AI Processing logic
                     if n.reason == 'follow' and do_follow_back:
                         p_data = client.get_profile(n.author.did)
-                        if "YES" in ai.generate_content(f"Does this profile match the interest? {p_data.description}").text.upper():
+                        if "YES" in ai.generate_content(f"Match? {p_data.description}").text.upper():
                             client.follow(n.author.did)
                             logs.append(f"👤 Followed back @{n.author.handle}")
                     elif n.reason in ['reply', 'mention', 'quote'] and do_reply:
                         prompt = f"Policy: {reply_policy}\nPost: {n.record.text}\nFrom: @{n.author.handle}\nReply shortly:"
                         rep = ai.generate_content(prompt).text
-                        # Get strong ref for reply
                         ref = models.create_strong_ref(n)
                         client.send_post(text=rep, reply_to=models.AppBskyFeedPost.ReplyRef(parent=ref, root=ref))
                         logs.append(f"💬 Replied to @{n.author.handle}")
@@ -352,12 +345,10 @@ else:
                         if feed:
                             client.like(feed[0].post.uri, feed[0].post.cid)
                             logs.append(f"👍 Like-back to @{n.author.handle}")
-                    
                     handled_notifs.add(n.uri)
                     new_handled += 1
                     log_p.markdown(f'<div class="log-container">{"<br>".join(logs[-15:])}</div>', unsafe_allow_html=True)
                     time.sleep(2.0)
-                
                 save_handled_notifs(handled_notifs)
                 client.app.bsky.notification.update_seen({'seen_at': client.get_current_time_iso()})
                 st.success(L(f"新たに {new_handled} 件処理しました。", f"Processed {new_handled} new notifications."))
