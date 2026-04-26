@@ -143,8 +143,9 @@ ai = None
 if v_key and bs_handle and bs_pwd:
     try:
         ai = AIClient(api_key=v_key, model_name=v_model)
-        client = Client()
-        client.login(bs_handle, bs_pwd)
+        temp_client = Client()
+        temp_client.login(bs_handle, bs_pwd)
+        client = temp_client # Only assign if login is successful
     except Exception as e:
         st.sidebar.error(f"Login Error: {e}")
 
@@ -158,7 +159,7 @@ tab_growth, tab_manage, tab_engage, tab_research, tab_stats, tab_notify = st.tab
     L("🔔 通知", "🔔 Notifications")
 ])
 
-if not client:
+if not client or not hasattr(client, 'me') or not client.me:
     st.warning(L("サイドバーで接続設定を完了してください。", "Please complete connection settings in the sidebar."))
 else:
     # --- TAB 1: Growth ---
