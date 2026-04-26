@@ -4,17 +4,20 @@ import time
 import json
 import pandas as pd
 from atproto import Client, models
-import google.generativeai as genai
-from google.generativeai.types import GenerationConfig
+from openai import OpenAI
 from dotenv import load_dotenv, set_key
 
 # --- Initialization ---
 load_dotenv(override=True)
-AI_MODEL_NAME = os.getenv("GEMINI_API_MODEL", "gemini-1.5-flash")
+
+# OpenAI / Gemini API Settings
+AI_API_KEY = os.getenv("AI_API_KEY", "")
+AI_MODEL_NAME = os.getenv("AI_MODEL_NAME", "gemini-1.5-flash")
+
 DB_FILE = "managed_data.json"
 NOTIF_DB = "handled_notifications.json"
 
-st.set_page_config(page_title="AI SNS Strategic Agent Ultimate", layout="wide", page_icon="🔥")
+st.set_page_config(page_title="AI SNS Strategic Agent", layout="wide", page_icon="🔥")
 
 # --- Language Settings ---
 if "lang" not in st.session_state:
@@ -31,7 +34,6 @@ st.markdown("""
     <style>
     .main { padding-top: 1rem; }
     .stAlert { margin-top: 10px; margin-bottom: 10px; }
-    .warning-text { color: #ff4b4b; font-weight: bold; font-size: 0.9rem; }
     .log-container {
         background-color: #0e1117;
         color: #00ff00;
@@ -85,6 +87,30 @@ def fetch_all_items(fetch_func, actor_did, item_type="follows", max_count=50000)
     progress_placeholder.empty()
     return results
 
+# --- Simple AI Client (OpenAI SDK based) ---
+class AIClient:
+    def __init__(self, api_key, model_name):
+        self.model_name = model_name
+        # Automatically detect provider by model name
+        if "gemini" in model_name.lower():
+            # Google's OpenAI-compatible endpoint
+            base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+        else:
+            base_url = None # Default OpenAI
+            
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+    
+    def generate_content(self, prompt):
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            return type('Response', (object,), {'text': response.choices[0].message.content})
+        except Exception as e:
+            return type('Response', (object,), {'text': f"AI Error: {e}"})
+
 # --- UI Header ---
 st.title(L("🔥 AI SNS 戦略エージェント", "🔥 AI SNS Strategic Agent"))
 st.caption(f"Strategy Automation | Model: {AI_MODEL_NAME}")
@@ -96,12 +122,17 @@ with st.sidebar:
     st.header(L("🔌 接続設定", "🔌 Connection"))
     bs_handle = st.text_input(L("ハンドル名", "Handle"), value=os.getenv("BLUESKY_HANDLE", ""))
     bs_pwd = st.text_input(L("パスワード", "Password"), type="password", value=os.getenv("BLUESKY_PASSWORD", ""))
-    gemini_key = st.text_input(L("Gemini APIキー", "Gemini API Key"), type="password", value=os.getenv("GEMINI_API_KEY", ""))
     
+    st.divider()
+    st.header("AI Settings")
+    v_key = st.text_input(L("AI APIキー", "AI API Key"), type="password", value=AI_API_KEY)
+    v_model = st.text_input(L("モデル名", "Model Name"), value=AI_MODEL_NAME, placeholder="gemini-1.5-flash or gpt-4o")
+
     if st.button(L("設定を保存", "Save Config")):
         set_key(".env", "BLUESKY_HANDLE", bs_handle)
         set_key(".env", "BLUESKY_PASSWORD", bs_pwd)
-        set_key(".env", "GEMINI_API_KEY", gemini_key)
+        set_key(".env", "AI_API_KEY", v_key)
+        set_key(".env", "AI_MODEL_NAME", v_model)
         st.success(L("更新しました！", "Updated!"))
 
     st.divider()
@@ -112,10 +143,9 @@ with st.sidebar:
 # AI/Client Init
 client = None
 ai = None
-if gemini_key and bs_handle and bs_pwd:
+if v_key and bs_handle and bs_pwd:
     try:
-        genai.configure(api_key=gemini_key)
-        ai = genai.GenerativeModel(AI_MODEL_NAME)
+        ai = AIClient(api_key=v_key, model_name=v_model)
         client = Client()
         client.login(bs_handle, bs_pwd)
     except Exception as e:
@@ -139,7 +169,6 @@ else:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader(L("🧹 片思い解除", "🧹 Unfollow"))
-            st.info(L("フォロー中の方を一人ずつ確認し、片思いであれば解除します。", "Check follows one by one and unfollow if not following back."))
             if st.button(L("💔 実行開始", "💔 Start Unfollow"), key="unfol_btn"):
                 log_p = st.empty()
                 logs = []
@@ -188,9 +217,8 @@ else:
                             try:
                                 client.follow(a.did)
                                 logs.append(f"✅ Followed: @{a.handle}")
-                                max_f = max(t_likes, t_comments)
-                                if max_f > 0:
-                                    feed_res = client.app.bsky.feed.get_author_feed({'actor': a.did, 'limit': max_f})
+                                if (t_likes > 0 or t_comments > 0):
+                                    feed_res = client.app.bsky.feed.get_author_feed({'actor': a.did, 'limit': max(t_likes, t_comments)})
                                     for i, item in enumerate(feed_res.feed):
                                         if i < t_likes: client.like(item.post.uri, item.post.cid)
                                         if i < t_comments and ai:
@@ -284,6 +312,7 @@ else:
     with tab_notify:
         st.subheader(L("🔔 AI通知自動マネージャー", "🔔 AI Notification Manager"))
         handled_notifs = load_handled_notifs()
+        
         with st.expander(L("👤 フォローへの対応", "👤 Follow Settings")):
             do_follow_back = st.checkbox(L("自動フォローバックを有効にする", "Enable Auto Follow-back"))
             follow_policy = st.text_area(L("フォロー条件", "Follow conditions"), value=L(f"プロフィールの内容を見て、{target_kws}に関連する人であればフォローしてください。", f"Follow back if the profile matches {target_kws}."))
@@ -304,14 +333,17 @@ else:
                     if n.uri in handled_notifs or n.is_read:
                         handled_notifs.add(n.uri)
                         continue
+                    
+                    # AI Processing logic
                     if n.reason == 'follow' and do_follow_back:
                         p_data = client.get_profile(n.author.did)
-                        if "YES" in ai.generate_content(f"Match? {p_data.description}").text.upper():
+                        if "YES" in ai.generate_content(f"Does this profile match the interest? {p_data.description}").text.upper():
                             client.follow(n.author.did)
                             logs.append(f"👤 Followed back @{n.author.handle}")
                     elif n.reason in ['reply', 'mention', 'quote'] and do_reply:
                         prompt = f"Policy: {reply_policy}\nPost: {n.record.text}\nFrom: @{n.author.handle}\nReply shortly:"
                         rep = ai.generate_content(prompt).text
+                        # Get strong ref for reply
                         ref = models.create_strong_ref(n)
                         client.send_post(text=rep, reply_to=models.AppBskyFeedPost.ReplyRef(parent=ref, root=ref))
                         logs.append(f"💬 Replied to @{n.author.handle}")
@@ -320,10 +352,12 @@ else:
                         if feed:
                             client.like(feed[0].post.uri, feed[0].post.cid)
                             logs.append(f"👍 Like-back to @{n.author.handle}")
+                    
                     handled_notifs.add(n.uri)
                     new_handled += 1
                     log_p.markdown(f'<div class="log-container">{"<br>".join(logs[-15:])}</div>', unsafe_allow_html=True)
                     time.sleep(2.0)
+                
                 save_handled_notifs(handled_notifs)
                 client.app.bsky.notification.update_seen({'seen_at': client.get_current_time_iso()})
                 st.success(L(f"新たに {new_handled} 件処理しました。", f"Processed {new_handled} new notifications."))

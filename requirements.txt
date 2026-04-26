@@ -1,4 +1,5 @@
 atproto
 google-generativeai
+openai
 python-dotenv
 streamlit
